@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Socio Credits</title>
+
+<!-- Pi Network SDK -->
+<script src="https://sdk.minepi.com/pi-sdk.js"></script>
+
+<!-- Supabase JS client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0d0d0d;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #app { width: 100%; max-width: 420px; padding: 24px; }
+
+  .card {
+    background: #161616;
+    border: 1px solid #262626;
+    border-radius: 16px;
+    padding: 28px;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 6px; }
+  p.sub { color: #999; font-size: 0.9rem; margin-bottom: 20px; }
+
+  .status { font-size: 0.85rem; color: #999; margin-top: 12px; text-align: center; }
+  .status.error { color: #e05c5c; }
+
+  select, button {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    background: #1e1e1e;
+    color: #eee;
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+  }
+  select { appearance: none; }
+  button {
+    background: #ffd400;
+    color: #111;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:not(:disabled):active { opacity: 0.8; }
+
+  .step-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #ffd400;
+    margin-bottom: 8px;
+  }
+
+  #main-app { display: none; }
+  .credits-pill {
+    display: inline-block;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    color: #ffd400;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- LOADING / AUTH STATE -->
+  <div id="auth-screen" class="card">
+    <h1>Socio Credits</h1>
+    <p class="sub">Connect with Pi Network to continue</p>
+    <button id="pi-connect-btn">Connect with Pi</button>
+    <div id="auth-status" class="status"></div>
+  </div>
+
+  <!-- ONBOARDING: LANGUAGE -->
+  <div id="onboarding-language" class="card" style="display:none;">
+    <div class="step-label">Step 1 of 2</div>
+    <h1>Choose your language</h1>
+    <p class="sub">This sets the language you'll see across Socio Credits</p>
+    <select id="language-select">
+      <option value="">Select language...</option>
+    </select>
+    <button id="language-next-btn" disabled>Continue</button>
+  </div>
+
+  <!-- ONBOARDING: COUNTRY -->
+  <div id="onboarding-country" class="card" style="display:none;">
+    <div class="step-label">Step 2 of 2</div>
+    <h1>Choose your country</h1>
+    <p class="sub">Helps us show relevant local content and businesses</p>
+    <select id="country-select">
+      <option value="">Select country...</option>
+    </select>
+    <button id="country-next-btn" disabled>Finish setup</button>
+    <div id="onboarding-status" class="status"></div>
+  </div>
+
+  <!-- MAIN APP (placeholder for now) -->
+  <div id="main-app" class="card">
+    <h1 id="welcome-text">Welcome</h1>
+    <p class="sub" id="user-location-text"></p>
+    <span class="credits-pill" id="credits-display">0 credits</span>
+    <p class="status" style="margin-top:20px;">Feed, posting, friends, and map coming next.</p>
+  </div>
+
+</div>
+
+<script>
+// =========================================================
+// CONFIG — fill these in with your socioAd project values
+// =========================================================
+const SUPABASE_URL = 'https://tzcelpamcfyexypiwfxx.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6Y2VscGFtY2Z5ZXh5cGl3Znh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2Njg4MjYsImV4cCI6MjA5ODI0NDgyNn0.uaU-tVpN1J76Y6ewzMpizbT2DuAG7I-b5fmlA9sJdv0';
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Common language list (World languages, extend as needed)
+const LANGUAGES = [
+  'English', 'Bahasa Malaysia', 'Mandarin (中文)', 'Tagalog', 'Bahasa Indonesia',
+  'Thai', 'Vietnamese', 'Hindi', 'Arabic', 'Spanish', 'French', 'Portuguese',
+  'Japanese', 'Korean', 'German', 'Russian'
+];
+
+// Common country list (extend as needed — prioritizing SEA)
+const COUNTRIES = [
+  'Malaysia', 'Singapore', 'Indonesia', 'Philippines', 'Thailand', 'Vietnam',
+  'Brunei', 'Cambodia', 'Myanmar', 'Laos', 'India', 'China', 'United States',
+  'United Kingdom', 'Australia', 'Other'
+];
+
+let currentUser = null; // { pi_uid, pi_username }
+let currentProfile = null; // row from `profiles`
+let selectedLanguage = null;
+let selectedCountry = null;
+
+// =========================================================
+// SCREEN HELPERS
+// =========================================================
+function showScreen(id) {
+  ['auth-screen', 'onboarding-language', 'onboarding-country', 'main-app']
+    .forEach(s => document.getElementById(s).style.display = (s === id) ? 'block' : 'none');
+}
+
+function setStatus(elId, msg, isError = false) {
+  const el = document.getElementById(elId);
+  el.textContent = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+
+// =========================================================
+// PI AUTHENTICATION
+// =========================================================
+async function initPiAuth() {
+  try {
+    Pi.init({ version: "2.0", sandbox: false }); // set sandbox: true while testing in Pi Browser sandbox
+  } catch (e) {
+    setStatus('auth-status', 'Pi SDK failed to load. Open this app inside Pi Browser.', true);
+    return;
+  }
+
+  document.getElementById('pi-connect-btn').addEventListener('click', connectPi);
+}
+
+async function connectPi() {
+  setStatus('auth-status', 'Connecting to Pi Network...');
+  document.getElementById('pi-connect-btn').disabled = true;
+
+  try {
+    const scopes = ['username', 'payments'];
+    const authResult = await Pi.authenticate(scopes, onIncompletePaymentFound);
+
+    currentUser = {
+      pi_uid: authResult.user.uid,
+      pi_username: authResult.user.username
+    };
+
+    setStatus('auth-status', 'Connected. Checking profile...');
+    await checkOrCreateProfile();
+
+  } catch (err) {
+    console.error(err);
+    setStatus('auth-status', 'Connection failed. Please try again.', true);
+    document.getElementById('pi-connect-btn').disabled = false;
+  }
+}
+
+function onIncompletePaymentFound(payment) {
+  // Handle any payment left in a pending state from a previous session.
+  // We'll wire this up properly once the credit purchase flow is built.
+  console.log('Incomplete payment found:', payment);
+}
+
+// =========================================================
+// PROFILE CHECK / CREATION
+// =========================================================
+async function checkOrCreateProfile() {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('pi_uid', currentUser.pi_uid)
+    .maybeSingle();
+
+  if (error) {
+    setStatus('auth-status', 'Error loading profile. Please try again.', true);
+    console.error(error);
+    return;
+  }
+
+  if (!data) {
+    // New user — create a bare profile row, then start onboarding
+    const { data: newProfile, error: insertError } = await supabase
+      .from('profiles')
+      .insert({ pi_uid: currentUser.pi_uid, pi_username: currentUser.pi_username })
+      .select()
+      .single();
+
+    if (insertError) {
+      setStatus('auth-status', 'Could not create profile. Please try again.', true);
+      console.error(insertError);
+      return;
+    }
+    currentProfile = newProfile;
+    startOnboarding();
+    return;
+  }
+
+  currentProfile = data;
+
+  if (!currentProfile.onboarded) {
+    startOnboarding();
+  } else {
+    enterApp();
+  }
+}
+
+// =========================================================
+// ONBOARDING FLOW
+// =========================================================
+function startOnboarding() {
+  populateLanguageOptions();
+  showScreen('onboarding-language');
+}
+
+function populateLanguageOptions() {
+  const sel = document.getElementById('language-select');
+  sel.innerHTML = '<option value="">Select language...</option>' +
+    LANGUAGES.map(l => `<option value="${l}">${l}</option>`).join('');
+
+  sel.addEventListener('change', () => {
+    selectedLanguage = sel.value || null;
+    document.getElementById('language-next-btn').disabled = !selectedLanguage;
+  });
+
+  document.getElementById('language-next-btn').addEventListener('click', () => {
+    populateCountryOptions();
+    showScreen('onboarding-country');
+  });
+}
+
+function populateCountryOptions() {
+  const sel = document.getElementById('country-select');
+  sel.innerHTML = '<option value="">Select country...</option>' +
+    COUNTRIES.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  sel.addEventListener('change', () => {
+    selectedCountry = sel.value || null;
+    document.getElementById('country-next-btn').disabled = !selectedCountry;
+  });
+
+  document.getElementById('country-next-btn').addEventListener('click', completeOnboarding);
+}
+
+async function completeOnboarding() {
+  setStatus('onboarding-status', 'Saving...');
+  document.getElementById('country-next-btn').disabled = true;
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ language: selectedLanguage, country: selectedCountry })
+    .eq('id', currentProfile.id)
+    .select()
+    .single();
+
+  if (error) {
+    setStatus('onboarding-status', 'Could not save. Please try again.', true);
+    console.error(error);
+    document.getElementById('country-next-btn').disabled = false;
+    return;
+  }
+
+  currentProfile = data;
+  enterApp();
+}
+
+// =========================================================
+// MAIN APP ENTRY
+// =========================================================
+function enterApp() {
+  document.getElementById('welcome-text').textContent = `Welcome, ${currentProfile.pi_username}`;
+  document.getElementById('user-location-text').textContent =
+    `${currentProfile.language} · ${currentProfile.country}`;
+  document.getElementById('credits-display').textContent =
+    `${currentProfile.socio_credits} credits`;
+  showScreen('main-app');
+}
+
+// =========================================================
+// INIT
+// =========================================================
+initPiAuth();
+</script>
+
+</body>
+</html>
